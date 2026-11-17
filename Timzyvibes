@@ -1,0 +1,180 @@
+import 'react-native-url-polyfill/auto';
+import React, { useEffect, useState } from 'react';
+
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  FlatList,
+  StyleSheet,
+  Alert,
+  StatusBar,
+  ActivityIndicator
+} from 'react-native';
+
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createClient } from '@supabase/supabase-js';
+import * as ImagePicker from 'expo-image-picker';
+import { Video, ResizeMode } from 'expo-av';
+
+// SUPABASE CONNECTION
+const SUPABASE_URL = 'https://fqiihxydvotnoquloacq.supabase.co';
+const SUPABASE_KEY = 'PASTE_YOUR_SUPABASE_PUBLISHABLE_KEY_HERE';
+
+const supabase = createClient(
+  SUPABASE_URL,
+  SUPABASE_KEY,
+  {
+    auth: {
+      storage: AsyncStorage,
+      autoRefreshToken: true,
+      persistSession: true,
+      detectSessionInUrl: false
+    }
+  }
+);
+
+const PINK = '#FF35D3';
+const BG = '#080808';
+
+// MAIN APP
+export default function App() {
+  const [session, setSession] = useState(undefined);
+  const [screen, setScreen] = useState('Home');
+  const [username, setUsername] = useState('');
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+    });
+
+    const { data } = supabase.auth.onAuthStateChange(
+      (_, session) => setSession(session)
+    );
+
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+
+    supabase
+      .from('profiles')
+      .select('username')
+      .eq('id', session.user.id)
+      .maybeSingle()
+      .then(({ data }) => {
+        setUsername(data?.username || 'user');
+      });
+  }, [session]);
+
+  if (session === undefined) {
+    return (
+      <View style={styles.root}>
+        <ActivityIndicator color={PINK} size="large" />
+      </View>
+    );
+  }
+
+  if (!session) return <Auth />;
+
+  const me = session.user;
+
+  return (
+    <View style={styles.root}>
+      <StatusBar barStyle="light-content" />
+
+      <View style={styles.header}>
+        <Text style={styles.logo}>TIMZYVIBE</Text>
+        <Text style={styles.tagline}>
+          Discover. Create. Connect.
+        </Text>
+      </View>
+
+      <View style={{ flex: 1 }}>
+        {screen === 'Home' && <Feed me={me} />}
+
+        {screen === 'Create' && (
+          <CreatePost
+            me={me}
+            onDone={() => setScreen('Home')}
+          />
+        )}
+
+        {screen === 'Live' && <Live />}
+
+        {screen === 'Profile' && (
+          <Profile me={me} username={username} />
+        )}
+      </View>
+
+      <View style={styles.navigation}>
+        {['Home', 'Create', 'Live', 'Profile'].map(item => (
+          <TouchableOpacity
+            key={item}
+            onPress={() => setScreen(item)}
+          >
+            <Text style={[
+              styles.navText,
+              screen === item && { color: PINK }
+            ]}>
+              {item === 'Home' ? '⌂' :
+               item === 'Create' ? '+' :
+               item === 'Live' ? '●' : '◎'}
+            </Text>
+
+            <Text style={[
+              styles.navLabel,
+              screen === item && { color: PINK }
+            ]}>
+              {item}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+// AUTHENTICATION
+function Auth() {
+  const [mode, setMode] = useState('login');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [name, setName] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  async function submit() {
+    if (!email || !password) {
+      Alert.alert('Error', 'Enter your email and password');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      if (mode === 'login') {
+        const { error } =
+          await supabase.auth.signInWithPassword({
+            email,
+            password
+          });
+
+        if (error) throw error;
+
+      } else {
+        const { data, error } =
+          await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+              data: { username: name }
+            }
+          });
+
+        if (error) throw error;
+
+        if (data.session) {
+          const { error: profileError } =
+            await supabase.from('profiles').up
